@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xếp Phòng Thi TN 2026 - Web Version</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- SheetJS (XLSX) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- UTILS & LOGIC ---
+        const SUBJECT_COLS = ['Ngoại ngữ', 'Vật lý', 'Hóa học', 'Sinh học', 'Lịch sử', 'Địa lý', 'GDKT&PL', 'Tin học', 'Công nghệ CN', 'Công nghệ NN'];
+        
+        // Hàm chuẩn hóa tiếng Việt để sắp xếp
+        const getVnKey = (str) => {
+            if (!str) return "";
+            str = str.toLowerCase();
+            const map = {
+                'à':'a','á':'a','ả':'a','ã':'a','ạ':'a','ă':'az','ằ':'az','ắ':'az','ẳ':'az','ẵ':'az','ặ':'az',
+                'â':'azz','ầ':'azz','ấ':'azz','ẩ':'azz','ẫ':'azz','ậ':'azz',
+                'đ':'dzz',
+                'ê':'ezz','ề':'ezz','ế':'ezz','ể':'ezz','ễ':'ezz','ệ':'ezz',
+                'ô':'ozz','ồ':'ozz','ố':'ozz','ổ':'ozz','ỗ':'ozz','ộ':'ozz',
+                'ơ':'ozzz','ờ':'ozzz','ớ':'ozzz','ở':'ozzz','ỡ':'ozzz','ợ':'ozzz',
+                'ư':'uzz','ừ':'uzz','ứ':'uzz','ử':'uzz','ữ':'uzz','ự':'uzz'
+            };
+            for (let char in map) {
+                str = str.split(char).join(map[char]);
+            }
+            return str;
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('home');
+            const [rawData, setRawData] = useState([]);
+            const [resultData, setResultData] = useState([]);
+            const [fileName, setFileName] = useState("");
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [filterRoom, setFilterRoom] = useState("ALL");
+            const [sbdStart, setSbdStart] = useState(100001);
+
+            // --- 1. NHẬP LIỆU ---
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setFileName(file.name);
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const bstr = evt.target.result;
+                    const wb = XLSX.read(bstr, { type: 'binary' });
+                    const wsname = wb.SheetNames[0];
+                    const ws = wb.Sheets[wsname];
+                    const data = XLSX.utils.sheet_to_json(ws);
+                    setRawData(data);
+                    // Reset kết quả cũ
+                    setResultData([]);
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const downloadSample = () => {
+                const data = [
+                    {'STT': '1', 'HỌ VÀ TÊN': 'Nguyễn Văn A', 'NGÀY SINH': '01/01/2007', 'Tên Lớp 12': '12C1', 'Ngoại ngữ': 'x', 'Vật lý': 'x', 'Hóa học': 'x', 'Sinh học': 'x'},
+                    {'STT': '2', 'HỌ VÀ TÊN': 'Trần Thị B', 'NGÀY SINH': '02/05/2007', 'Tên Lớp 12': '12C1', 'Ngoại ngữ': 'x', 'Lịch sử': 'x', 'Địa lý': 'x', 'GDKT&PL': 'x'},
+                    {'STT': '3', 'HỌ VÀ TÊN': 'Lê Văn C', 'NGÀY SINH': '15/08/2007', 'Tên Lớp 12': '12C2', 'Vật lý': 'x', 'Hóa học': 'x'},
+                    {'STT': '4', 'HỌ VÀ TÊN': 'Phạm Thị D', 'NGÀY SINH': '20/11/2007', 'Tên Lớp 12': '12C2', 'Ngoại ngữ': 'x', 'Lịch sử': 'x', 'Địa lý': 'x'}
+                ];
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Data");
+                XLSX.writeFile(wb, "Mau_nhap_lieu.xlsx");
+            };
+
+            // --- 2. XỬ LÝ (THUẬT TOÁN) ---
+            const processData = () => {
+                if (rawData.length === 0) {
+                    alert("Vui lòng nhập dữ liệu trước!");
+                    return;
+                }
+                setIsProcessing(true);
+                setTimeout(() => {
+                    try {
+                        let df = rawData.map(r => ({...r})); // Clone data
+
+                        // 1. Xác định môn thi & Ca thi
+                        df.forEach(row => {
+                            let subs = [];
+                            SUBJECT_COLS.forEach(sub => {
+                                if (row[sub] && String(row[sub]).trim() !== "") {
+                                    subs.push(sub);
+                                }
+                            });
+                            subs.sort();
+                            row['__L__'] = subs;
+                            row['Ca 1'] = subs.length > 0 ? subs[0] : null;
+                            row['Ca 2'] = subs.length > 1 ? subs[1] : null;
+
+                            // Key sort
+                            let nameParts = String(row['HỌ VÀ TÊN'] || "").trim().split(" ");
+                            let ten = nameParts.length > 0 ? nameParts[nameParts.length - 1] : "";
+                            row['__K_Ten__'] = getVnKey(ten);
+                            row['__K_Ho__'] = getVnKey(String(row['HỌ VÀ TÊN']));
+                            row['__K_Mon__'] = subs.join("|");
+                        });
+
+                        // 2. Sắp xếp
+                        df.sort((a, b) => {
+                            if (a['__K_Mon__'] !== b['__K_Mon__']) return a['__K_Mon__'].localeCompare(b['__K_Mon__']);
+                            if (a['__K_Ten__'] !== b['__K_Ten__']) return a['__K_Ten__'].localeCompare(b['__K_Ten__']);
+                            return a['__K_Ho__'].localeCompare(b['__K_Ho__']);
+                        });
+
+                        // 3. Chia phòng (Logic lõi)
+                        const ROOM_CAP = 24;
+                        let rooms = [];
+                        let curr = [];
+                        let s1 = new Set();
+                        let s2 = new Set();
+                        let over = [];
+
+                        df.forEach(r => {
+                            let m1 = r['Ca 1'];
+                            let m2 = r['Ca 2'];
+                            let t1 = new Set(s1);
+                            let t2 = new Set(s2);
+                            if (m1) t1.add(m1);
+                            if (m2) t2.add(m2);
+
+                            // Điều kiện ngắt phòng: Đủ 24 HS HOẶC Túi đề quá phức tạp (>3 môn/ca)
+                            if (curr.length >= ROOM_CAP) {
+                                rooms.push(curr);
+                                curr = [r];
+                                s1 = new Set(m1 ? [m1] : []);
+                                s2 = new Set(m2 ? [m2] : []);
+                            } else if (t1.size > 3 || t2.size > 3) {
+                                over.push(r);
+                            } else {
+                                curr.push(r);
+                                if (m1) s1.add(m1);
+                                if (m2) s2.add(m2);
+                            }
+                        });
+                        if (curr.length > 0) rooms.push(curr);
+
+                        // Xử lý danh sách dư (over)
+                        if (over.length > 0) {
+                            // Sort lại list dư
+                            over.sort((a, b) => a['__K_Mon__'].localeCompare(b['__K_Mon__']) || a['__K_Ten__'].localeCompare(b['__K_Ten__']));
+                            let currOv = [];
+                            over.forEach(r => {
+                                currOv.push(r);
+                                if (currOv.length >= ROOM_CAP) {
+                                    rooms.push(currOv);
+                                    currOv = [];
+                                }
+                            });
+                            if (currOv.length > 0) rooms.push(currOv);
+                        }
+
+                        // 4. Đánh số phòng & Clean data
+                        let final = [];
+                        rooms.forEach((room, i) => {
+                            let rName = `P${String(i + 1).padStart(2, '0')}`;
+                            room.forEach((r, j) => {
+                                r['Phòng Thi'] = rName;
+                                r['STT Phòng'] = j + 1;
+                                // Clean temp keys
+                                delete r['__L__']; delete r['__K_Ten__']; delete r['__K_Ho__']; delete r['__K_Mon__'];
+                                final.push(r);
+                            });
+                        });
+
+                        setResultData(final);
+                        alert(`Đã xếp xong ${rooms.length} phòng thi cho ${final.length} thí sinh!`);
+                        setActiveTab('home'); // Về trang chủ xem kqua
+                    } catch (err) {
+                        console.error(err);
+                        alert("Có lỗi xảy ra: " + err.message);
+                    } finally {
+                        setIsProcessing(false);
+                    }
+                }, 100); // Timeout để render UI loading
+            };
+
+            const assignSBD = () => {
+                if (resultData.length === 0) return;
+                let start = parseInt(sbdStart);
+                if (isNaN(start)) { alert("SBD không hợp lệ"); return; }
+                
+                // Sort lại theo Phòng -> STT trước khi đánh SBD
+                let sorted = [...resultData].sort((a, b) => {
+                    if (a['Phòng Thi'] !== b['Phòng Thi']) return a['Phòng Thi'].localeCompare(b['Phòng Thi']);
+                    return a['STT Phòng'] - b['STT Phòng'];
+                });
+
+                sorted.forEach((r, i) => {
+                    r['SBD'] = start + i;
+                });
+                setResultData(sorted);
+                alert("Đã đánh SBD thành công!");
+            };
+
+            const moveStudent = (index, targetRoom) => {
+                let newData = [...resultData];
+                let student = newData[index];
+                let oldRoom = student['Phòng Thi'];
+
+                student['Phòng Thi'] = targetRoom;
+
+                // Re-calculate STT in Old Room
+                let oldRoomStudents = newData.filter(r => r['Phòng Thi'] === oldRoom).sort((a, b) => a['STT Phòng'] - b['STT Phòng']);
+                oldRoomStudents.forEach((r, i) => r['STT Phòng'] = i + 1);
+
+                // Calculate STT in New Room (Append to end)
+                let newRoomStudents = newData.filter(r => r['Phòng Thi'] === targetRoom);
+                let maxStt = 0;
+                newRoomStudents.forEach(r => { if(r['STT Phòng'] > maxStt) maxStt = r['STT Phòng']; });
+                student['STT Phòng'] = maxStt + 1;
+
+                setResultData(newData);
+            };
+
+            // --- 3. XUẤT FILE ---
+            
+            // Hàm tính độ rộng cột tự động
+            const autoFitColumns = (data, worksheet) => {
+                if (!data || data.length === 0) return;
+                const headers = Object.keys(data[0]);
+                const objectMaxLength = [];
+                
+                headers.forEach(h => {
+                    objectMaxLength.push({ wch: h.length + 5 }); // Độ rộng tối thiểu theo Header
+                });
+
+                data.forEach(row => {
+                    headers.forEach((key, i) => {
+                        const value = row[key] ? String(row[key]) : "";
+                        // Giới hạn độ rộng tối đa để không bị quá dài
+                        const len = Math.min(value.length + 2, 50); 
+                        if (len > objectMaxLength[i].wch) {
+                            objectMaxLength[i].wch = len;
+                        }
+                    });
+                });
+                worksheet['!cols'] = objectMaxLength;
+            };
+
+            // Hàm lọc dữ liệu sạch để xuất
+            const getCleanDataForExport = (data) => {
+                // Xác định thứ tự cột chuẩn
+                return data.map(item => ({
+                    'SBD': item['SBD'] || '',
+                    'HỌ VÀ TÊN': item['HỌ VÀ TÊN'],
+                    'NGÀY SINH': item['NGÀY SINH'],
+                    'Tên Lớp 12': item['Tên Lớp 12'],
+                    'Phòng Thi': item['Phòng Thi'],
+                    'STT Phòng': item['STT Phòng'],
+                    'Ca 1': item['Ca 1'],
+                    'Ký tên 1': '', // Cột trống để ký
+                    'Ca 2': item['Ca 2'],
+                    'Ký tên 2': ''  // Cột trống để ký
+                }));
+            };
+
+            const exportExcel = () => {
+                if (resultData.length === 0) return;
+                const wb = XLSX.utils.book_new();
+
+                // 1. CHUẨN BỊ DỮ LIỆU SẠCH (Loại bỏ cột thừa)
+                const cleanData = getCleanDataForExport(resultData);
+
+                // --- Sheet 1: Tổng hợp ---
+                const wsTotal = XLSX.utils.json_to_sheet(cleanData);
+                autoFitColumns(cleanData, wsTotal); // Căn chỉnh cột
+                XLSX.utils.book_append_sheet(wb, wsTotal, "DS_TONG");
+
+                // --- Sheet 2: Thống kê Ca ---
+                let stats = {};
+                resultData.forEach(r => {
+                    if (r['Ca 1']) { let k = "Ca 1 - " + r['Ca 1']; stats[k] = (stats[k] || 0) + 1; }
+                    if (r['Ca 2']) { let k = "Ca 2 - " + r['Ca 2']; stats[k] = (stats[k] || 0) + 1; }
+                });
+                let statRows = Object.keys(stats).sort().map(k => ({'Môn/Ca': k, 'Số Lượng': stats[k]}));
+                const wsStats = XLSX.utils.json_to_sheet(statRows);
+                autoFitColumns(statRows, wsStats);
+                XLSX.utils.book_append_sheet(wb, wsStats, "THONG_KE");
+
+                // --- Sheet 3+: Từng phòng ---
+                let rooms = [...new Set(resultData.map(r => r['Phòng Thi']))].sort();
+                rooms.forEach(room => {
+                    // Lọc và sort dữ liệu phòng
+                    let rawRoomData = resultData.filter(r => r['Phòng Thi'] === room).sort((a,b) => a['STT Phòng'] - b['STT Phòng']);
+                    // Làm sạch dữ liệu phòng
+                    let cleanRoomData = getCleanDataForExport(rawRoomData);
+                    
+                    let wsRoom = XLSX.utils.json_to_sheet(cleanRoomData);
+                    autoFitColumns(cleanRoomData, wsRoom); // Căn chỉnh cột
+                    XLSX.utils.book_append_sheet(wb, wsRoom, room);
+                });
+
+                XLSX.writeFile(wb, "Ket_qua_xep_phong.xlsx");
+            };
+
+            // --- UI COMPONENTS ---
+            const uniqueRooms = useMemo(() => {
+                if (!resultData.length) return [];
+                return [...new Set(resultData.map(r => r['Phòng Thi']))].sort();
+            }, [resultData]);
+
+            const displayData = useMemo(() => {
+                if (filterRoom === "ALL") return resultData;
+                return resultData.filter(r => r['Phòng Thi'] === filterRoom).sort((a,b) => a['STT Phòng'] - b['STT Phòng']);
+            }, [resultData, filterRoom]);
+
+            return (
+                <div className="flex h-screen overflow-hidden bg-gray-100">
+                    {/* SIDEBAR */}
+                    <div className="w-64 bg-white shadow-md flex-shrink-0 flex flex-col">
+                        <div className="p-6 border-b">
+                            <h1 className="text-xl text-center font-bold text-blue-700">XẾP PHÒNG THI TN<br/>VERSION WEB 2026</h1>
+                            <p className="text-xs text-center text-gray-500 mt-2">v2026.12<br/>Nguyễn Văn Chiến<br/>ĐT: 0975.702.250</p>
+                        </div>
+                        <nav className="flex-1 p-4 space-y-2">
+                            <button onClick={() => setActiveTab('home')} className={`w-full text-left px-4 py-3 rounded-lg font-medium transition ${activeTab === 'home' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                <i className="fas fa-home mr-2"></i> Quản lý & Xếp phòng
+                            </button>
+                            <button onClick={() => setActiveTab('stats')} className={`w-full text-left px-4 py-3 rounded-lg font-medium transition ${activeTab === 'stats' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                <i className="fas fa-chart-pie mr-2"></i> Báo cáo & Thống kê
+                            </button>
+                            <button onClick={() => setActiveTab('guide')} className={`w-full text-left px-4 py-3 rounded-lg font-medium transition ${activeTab === 'guide' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                                <i className="fas fa-book mr-2"></i> Hướng dẫn sử dụng
+                            </button>
+                        </nav>
+                        <div className="p-4 border-t text-xs text-center text-gray-400"><img src="https://raw.githubusercontent.com/nvchienspt-maker/NVC-Movie-TV/refs/heads/main/qr.png" alt="Donate" />
+                            QUÉT MÃ ỦNG HỘ NHÀ PHÁT TRIỂN<br/>------pls------
+                        </div>
+                    </div>
+
+                    {/* MAIN CONTENT */}
+                    <main className="flex-1 flex flex-col overflow-hidden">
+                        {/* TAB: HOME */}
+                        {activeTab === 'home' && (
+                            <div className="flex-1 flex flex-col p-6 overflow-hidden">
+                                {/* Toolbar */}
+                                <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap gap-4 items-center">
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={downloadSample} className="px-3 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 text-sm font-semibold"><i className="fas fa-download mr-1"></i> Tải Mẫu</button>
+                                        <label className="cursor-pointer px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm font-semibold">
+                                            <i className="fas fa-folder-open mr-1"></i> Nhập Excel
+                                            <input type="file" onChange={handleFileUpload} accept=".xlsx, .xls, .csv" className="hidden" />
+                                        </label>
+                                    </div>
+                                    <div className="h-8 w-px bg-gray-300 mx-2"></div>
+                                    <button onClick={processData} disabled={isProcessing} className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 text-sm font-bold shadow-sm">
+                                        {isProcessing ? <span className="animate-spin inline-block mr-2">⌛</span> : <i className="fas fa-bolt mr-1"></i>} 
+                                        XẾP PHÒNG (F5)
+                                    </button>
+                                    <div className="flex items-center gap-2 bg-gray-50 p-1 rounded border">
+                                        <span className="text-xs font-semibold ml-2">SBD đầu:</span>
+                                        <input type="number" value={sbdStart} onChange={(e) => setSbdStart(e.target.value)} className="w-20 p-1 text-sm border rounded" />
+                                        <button onClick={assignSBD} className="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm"><i className="fas fa-sort-numeric-down"></i> Đánh SBD</button>
+                                    </div>
+                                    <div className="flex-1 text-right">
+                                        <button onClick={exportExcel} className="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800 text-sm font-bold shadow-sm"><i className="fas fa-file-excel mr-1"></i> Xuất Kết Quả</button>
+                                    </div>
+                                </div>
+
+                                {/* Info Bar */}
+                                <div className="mb-2 flex justify-between items-end">
+                                    <div>
+                                        <span className="text-gray-600 font-medium">Dữ liệu gốc: </span> 
+                                        <span className="font-bold text-gray-800">{rawData.length}</span> thí sinh
+                                        <span className="mx-2">|</span>
+                                        <span className="text-gray-600 font-medium">Kết quả: </span>
+                                        <span className="font-bold text-blue-600">{resultData.length > 0 ? `${resultData.length} thí sinh / ${uniqueRooms.length} phòng` : "Chưa xếp"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="text-sm font-semibold">Xem phòng:</label>
+                                        <select value={filterRoom} onChange={(e) => setFilterRoom(e.target.value)} className="border rounded p-1 text-sm bg-white shadow-sm min-w-[100px]">
+                                            <option value="ALL">TẤT CẢ</option>
+                                            {uniqueRooms.map(r => <option key={r} value={r}>{r}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Data Table */}
+                                <div className="bg-white rounded-lg shadow flex-1 overflow-auto custom-scrollbar border">
+                                    <table className="w-full text-sm text-left border-collapse">
+                                        <thead className="text-xs text-gray-700 uppercase bg-gray-200 sticky top-0 z-10">
+                                            <tr>
+                                                <th className="px-4 py-3 border">SBD</th>
+                                                <th className="px-4 py-3 border w-48">Họ và Tên</th>
+                                                <th className="px-4 py-3 border">Ngày Sinh</th>
+                                                <th className="px-4 py-3 border text-center font-bold text-blue-800">Phòng</th>
+                                                <th className="px-4 py-3 border text-center">STT Phòng</th>
+                                                <th className="px-4 py-3 border text-green-700">Ca 1</th>
+                                                <th className="px-4 py-3 border text-orange-700">Ca 2</th>
+                                                <th className="px-4 py-3 border text-center">Thao tác</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {displayData.length > 0 ? (
+                                                displayData.map((row, idx) => (
+                                                    <tr key={idx} className="bg-white border-b hover:bg-gray-50">
+                                                        <td className="px-4 py-2 border font-mono">{row['SBD'] || '-'}</td>
+                                                        <td className="px-4 py-2 border font-medium">{row['HỌ VÀ TÊN']}</td>
+                                                        <td className="px-4 py-2 border">{row['NGÀY SINH']}</td>
+                                                        <td className="px-4 py-2 border text-center font-bold text-blue-600 bg-blue-50">{row['Phòng Thi']}</td>
+                                                        <td className="px-4 py-2 border text-center">{row['STT Phòng']}</td>
+                                                        <td className="px-4 py-2 border text-green-700">{row['Ca 1'] || ''}</td>
+                                                        <td className="px-4 py-2 border text-orange-700">{row['Ca 2'] || ''}</td>
+                                                        <td className="px-4 py-2 border text-center">
+                                                            <button 
+                                                                className="text-gray-400 hover:text-blue-600"
+                                                                title="Chuyển phòng"
+                                                                onClick={() => {
+                                                                    const newRoom = prompt(`Chuyển ${row['HỌ VÀ TÊN']} sang phòng nào? (Hiện tại: ${row['Phòng Thi']})`, uniqueRooms[0]);
+                                                                    if (newRoom && uniqueRooms.includes(newRoom) && newRoom !== row['Phòng Thi']) {
+                                                                        // Tìm index thực trong mảng gốc
+                                                                        const realIdx = resultData.indexOf(row);
+                                                                        moveStudent(realIdx, newRoom);
+                                                                    } else if (newRoom) {
+                                                                        alert("Tên phòng không hợp lệ!");
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <i className="fas fa-exchange-alt"></i>
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                <tr>
+                                                    <td colSpan="8" className="px-6 py-12 text-center text-gray-400 italic">
+                                                        {rawData.length > 0 ? "Nhấn nút '⚡ XẾP PHÒNG' để bắt đầu xử lý" : "Chưa có dữ liệu. Hãy tải file Excel lên."}
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB: STATS */}
+                        {activeTab === 'stats' && (
+                            <div className="flex-1 p-6 overflow-auto">
+                                <h2 className="text-2xl font-bold mb-4 text-gray-700">Thống Kê Dữ Liệu</h2>
+                                <button onClick={exportExcel} className="mb-4 px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800 text-sm font-bold shadow-sm"><i className="fas fa-file-excel mr-1"></i> Xuất Báo Cáo Excel</button>
+                                
+                                {resultData.length > 0 ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="bg-white p-4 rounded shadow border">
+                                            <h3 className="font-bold text-lg mb-3 border-b pb-2">Tổng hợp CA THI</h3>
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-gray-100"><tr><th className="p-2 text-left">Nội dung</th><th className="p-2 text-right">Số lượng</th></tr></thead>
+                                                <tbody>
+                                                    {(() => {
+                                                        let stats = {};
+                                                        resultData.forEach(r => {
+                                                            if (r['Ca 1']) stats[`Ca 1: ${r['Ca 1']}`] = (stats[`Ca 1: ${r['Ca 1']}`] || 0) + 1;
+                                                            if (r['Ca 2']) stats[`Ca 2: ${r['Ca 2']}`] = (stats[`Ca 2: ${r['Ca 2']}`] || 0) + 1;
+                                                        });
+                                                        return Object.keys(stats).sort().map(k => (
+                                                            <tr key={k} className="border-b"><td className="p-2">{k}</td><td className="p-2 text-right font-bold">{stats[k]}</td></tr>
+                                                        ));
+                                                    })()}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div className="bg-white p-4 rounded shadow border">
+                                            <h3 className="font-bold text-lg mb-3 border-b pb-2">Chi tiết từng Phòng</h3>
+                                            <div className="overflow-auto max-h-96 custom-scrollbar">
+                                                <table className="w-full text-sm">
+                                                    <thead className="bg-gray-100 sticky top-0"><tr><th className="p-2 text-left">Phòng</th><th className="p-2">Ca 1</th><th className="p-2">Ca 2</th></tr></thead>
+                                                    <tbody>
+                                                        {uniqueRooms.map(room => {
+                                                            let rData = resultData.filter(r => r['Phòng Thi'] === room);
+                                                            let c1 = [...new Set(rData.map(r=>r['Ca 1']).filter(Boolean))].join(", ");
+                                                            let c2 = [...new Set(rData.map(r=>r['Ca 2']).filter(Boolean))].join(", ");
+                                                            return (
+                                                                <tr key={room} className="border-b">
+                                                                    <td className="p-2 font-bold text-blue-600">{room} ({rData.length})</td>
+                                                                    <td className="p-2 text-xs">{c1}</td>
+                                                                    <td className="p-2 text-xs">{c2}</td>
+                                                                </tr>
+                                                            )
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : <div className="text-gray-500">Chưa có kết quả xếp phòng.</div>}
+                            </div>
+                        )}
+
+                        {/* TAB: GUIDE */}
+                        {activeTab === 'guide' && (
+                            <div className="flex-1 p-8 overflow-auto bg-white m-6 rounded shadow">
+                                <h2 className="text-2xl font-bold mb-4">Hướng dẫn sử dụng (Bản Web)</h2>
+                                <div className="prose max-w-none text-gray-700">
+                                    <p>Đây là phiên bản rút gọn chạy trên nền tảng Web HTML5. Sử dụng trực tiếp không cần cài đặt:</p>
+                                    <ul className="list-disc pl-6 space-y-2">
+                                        <li><strong>Bước 1:</strong> Tải file mẫu bằng nút màu xanh dương (hoặc dùng file Excel có sẵn đúng định dạng).</li>
+                                        <li><strong>Bước 2:</strong> Nhấn "Nhập Excel" để tải dữ liệu lên.</li>
+                                        <li><strong>Bước 3:</strong> Nhấn nút màu Cam "Xếp Phòng" để chạy thuật toán tự động.</li>
+                                        <li><strong>Bước 4:</strong> Sau khi có kết quả, có thể nhập số bắt đầu và nhấn "Đánh SBD".</li>
+                                        <li><strong>Bước 5:</strong> Nhấn "Xuất Kết Quả" để tải file Excel về máy tính.</li>
+                                    </ul>
+                                    <p className="mt-4 font-semibold text-red-500">Lưu ý quan trọng:</p>
+                                    <ul className="list-disc pl-6">
+                                        <li>Dữ liệu được sau khi xử lý cá bạn tải file excel về chỉnh sửa lại cho phù hợp.</li>
+                                        <li>Nếu file Excel quá lớn (>10.000 dòng), trình duyệt có thể bị đơ một chút khi xử lý.</li>
+                                        <li>Để chuyển thí sinh sang phòng khác: Nhấn vào icon <i className="fas fa-exchange-alt"></i> ở cột cuối cùng trong bảng danh sách.</li>
+					<p className="mt-4 font-semibold text-blue-500">Nguyễn Văn Chiến - THPT Sông Công. </p>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
